@@ -86,6 +86,10 @@ A modern, full-featured personal finance management web app built with **React +
 git clone https://github.com/@Tewa0121/expense-tracker.git
 cd expense-tracker
 
+[![Deployed on Vercel](https://img.shields.io/badge/Deployed-Vercel-black?logo=vercel&logoColor=white)](https://expense-tracker-21.vercel.app)
+[![Made with React](https://img.shields.io/badge/Made%20with-React-61DAFB?logo=react&logoColor=white)](https://react.dev/)
+[![Tailwind CSS](https://img.shields.io/badge/Styled%20with-Tailwind-38B2AC?logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
+
 # Install dependencies
 npm install
 
