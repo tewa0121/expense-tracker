@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { Download, Plus, Receipt, Search, SearchX, X } from 'lucide-react';
 import { useExpense } from '../context/ExpenseContext';
 import { useUI } from '../context/UIContext';
@@ -21,6 +21,13 @@ const Transactions = () => {
   const [category, setCategory] = useState('all');
   const [month, setMonth] = useState('all');
   const [visible, setVisible] = useState(PAGE_SIZE);
+  const searchRef = useRef(null);
+  const location = useLocation();
+
+  // The phone search button in the header lands here and puts the cursor in the search box.
+  useEffect(() => {
+    if (location.state?.focusSearch) searchRef.current?.focus();
+  }, [location.state]);
 
   const q = params.get('q') || '';
   const setQ = (value) => {
@@ -39,7 +46,7 @@ const Transactions = () => {
       (type === 'all' || t.type === type) &&
       (category === 'all' || t.category === category) &&
       (month === 'all' || monthKeyOf(t.date) === month) &&
-      (!needle || t.title.toLowerCase().includes(needle) || t.category.toLowerCase().includes(needle))
+      (!needle || [t.title, t.category, t.date, String(t.amount)].some((v) => String(v ?? '').toLowerCase().includes(needle)))
     );
   }, [transactions, q, type, category, month]);
 
@@ -81,9 +88,10 @@ const Transactions = () => {
               <Search className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" size={17} aria-hidden="true" />
               <input
                 type="search"
+                ref={searchRef}
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder="Search by title or category"
+                placeholder="Search title, category, amount or date"
                 aria-label="Search transactions"
                 className="input pl-10"
               />

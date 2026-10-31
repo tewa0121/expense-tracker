@@ -1,242 +1,235 @@
-import React, { createContext, useState, useContext, useEffect } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { readJSON, writeJSON, removeKey } from '../lib/storage';
+import { hashPassword, verifyPassword, newId } from '../lib/password';
+import { DEFAULT_SETTINGS } from '../lib/constants';
 
-const AuthContext = createContext();
+const AuthContext = createContext(null);
 
 const EMAIL_REGEX = /^[^\s@]+@gmail\.com$/i;
-const PASSWORD_REGEX = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/; // ≥8, has letter + number
+const PASSWORD_REGEX = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/; // ≥8 chars, a letter and a number
+
+const USERS_KEY = 'expense_users_db';
+const SESSION_KEY = 'expense_user';
+const THEME_KEY = 'expense_dark';
+
+const settingsKey = (id) => `expense_${id}_settings`;
+
+const getUsers = () => readJSON(USERS_KEY, []);
+const saveUsers = (users) => writeJSON(USERS_KEY, users);
+
+/**
+ * Accounts created by the earlier version have no `id` and their data is stored under
+ * their email. Using the email as that account's id keeps all of it reachable, and from
+ * then on the id never changes, even if the user changes their email.
+ */
+function withIds(users) {
+  let changed = false;
+  const next = users.map((u) => {
+    if (u.id) return u;
+    changed = true;
+    return { ...u, id: u.email };
+  });
+  if (changed) saveUsers(next);
+  return next;
+}
+
+const publicUser = (u) => ({ id: u.id, name: u.name, email: u.email, createdAt: u.createdAt });
+
+function readSession() {
+  const stored = readJSON(SESSION_KEY, null);
+  if (!stored) return null;
+  const users = withIds(getUsers());
+  const found = users.find((u) => u.id === stored.id) || users.find((u) => u.email === stored.email);
+  return found ? publicUser(found) : null;
+}
+
+function initialDark() {
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    if (saved !== null) return saved === 'true';
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  } catch {
+    return false;
+  }
+}
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [darkMode, setDarkMode] = useState(
-    () => localStorage.getItem('expense_dark') === 'true'
-  );
+  const [user, setUser] = useState(readSession);
+  const [darkMode, setDarkMode] = useState(initialDark);
+  const [settings, setSettings] = useState(() => {
+    const u = readSession();
+    return u ? { ...DEFAULT_SETTINGS, ...readJSON(settingsKey(u.id), {}) } : DEFAULT_SETTINGS;
+  });
 
   useEffect(() => {
-    const stored = localStorage.getItem('expense_user');
-    if (stored) setUser(JSON.parse(stored));
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    if (darkMode) document.documentElement.classList.add('dark');
-    else document.documentElement.classList.remove('dark');
-    localStorage.setItem('expense_dark', darkMode);
+    document.documentElement.classList.toggle('dark', darkMode);
+    try { localStorage.setItem(THEME_KEY, String(darkMode)); } catch { /* ignore */ }
+    document.querySelector('meta[name="theme-color"]')
+      ?.setAttribute('content', darkMode ? '#081112' : '#0e2326');
   }, [darkMode]);
-
-  // Get all registered users (our "database")
-  const getUsers = () => {
-    const stored = localStorage.getItem('expense_users_db');
-    return stored ? JSON.parse(stored) : [];
-  };
-
-  const saveUsers = (users) => {
-    localStorage.setItem('expense_users_db', JSON.stringify(users));
-  };
 
   const validateEmail = (email) => EMAIL_REGEX.test(email);
   const validatePassword = (password) => PASSWORD_REGEX.test(password);
 
+  const startSession = useCallback((u) => {
+    const session = publicUser(u);
+    writeJSON(SESSION_KEY, { id: session.id });
+    setSettings({ ...DEFAULT_SETTINGS, ...readJSON(settingsKey(session.id), {}) });
+    setUser(session);
+  }, []);
+
   // ============ SIGN UP ============
-  const signup = ({ name, email, password, confirmPassword }) => {
-    // Trim everything first
+  const signup = async ({ name, email, password, confirmPassword }) => {
     const cleanName = (name || '').trim();
     const cleanEmail = (email || '').trim().toLowerCase();
-    const cleanPassword = password || '';
-    const cleanConfirm = confirmPassword || '';
 
-    if (!cleanName || !cleanEmail || !cleanPassword || !cleanConfirm) {
-      return { success: false, error: 'All fields are required' };
+    if (!cleanName || !cleanEmail || !password || !confirmPassword) {
+      return { success: false, error: 'Fill in all fields.' };
     }
-
     if (!validateEmail(cleanEmail)) {
-      return { success: false, error: 'Email must be a valid @gmail.com address' };
+      return { success: false, error: 'Use a Gmail address, for example you@gmail.com.' };
+    }
+    if (!validatePassword(password)) {
+      return { success: false, error: 'Password needs at least 8 characters, including a letter and a number.' };
+    }
+    if (password !== confirmPassword) {
+      return { success: false, error: 'Passwords don’t match.' };
     }
 
-    if (!validatePassword(cleanPassword)) {
-      return {
-        success: false,
-        error:
-          'Password must be at least 8 characters and contain both letters and numbers'
+    const users = withIds(getUsers());
+    if (users.some((u) => u.email.toLowerCase() === cleanEmail)) {
+      return { success: false, error: 'This email already has an account. Sign in instead.' };
+    }
+
+    try {
+      const { salt, hash } = await hashPassword(password);
+      const newUser = {
+        id: newId(), name: cleanName, email: cleanEmail, salt, hash,
+        createdAt: new Date().toISOString(),
       };
+      saveUsers([...users, newUser]);
+      startSession(newUser);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
     }
-
-    if (cleanPassword !== cleanConfirm) {
-      return { success: false, error: 'Passwords do not match' };
-    }
-
-    const users = getUsers();
-
-    // Check if email already exists
-    if (users.find((u) => u.email.toLowerCase() === cleanEmail)) {
-      return {
-        success: false,
-        error:
-          'This email is already registered. Please sign in instead, or use a different email.'
-      };
-    }
-
-    const newUser = {
-      name: cleanName,
-      email: cleanEmail,
-      password: cleanPassword, // demo only — never store plaintext in real apps
-      createdAt: new Date().toISOString()
-    };
-
-    users.push(newUser);
-    saveUsers(users);
-
-    const session = {
-      name: newUser.name,
-      email: newUser.email,
-      loginTime: new Date().toISOString()
-    };
-    setUser(session);
-    localStorage.setItem('expense_user', JSON.stringify(session));
-
-    return { success: true };
   };
 
   // ============ LOGIN ============
-  const login = ({ email, password }) => {
+  const login = async ({ email, password }) => {
     const cleanEmail = (email || '').trim().toLowerCase();
-    const cleanPassword = password || '';
-
-    if (!cleanEmail || !cleanPassword) {
-      return { success: false, error: 'Email and password are required' };
+    if (!cleanEmail || !password) {
+      return { success: false, error: 'Enter your email and password.' };
     }
-
     if (!validateEmail(cleanEmail)) {
-      return { success: false, error: 'Email must be a valid @gmail.com address' };
+      return { success: false, error: 'Use a Gmail address, for example you@gmail.com.' };
     }
 
-    const users = getUsers();
-    const found = users.find(
-      (u) => u.email.toLowerCase() === cleanEmail
-    );
-
-    if (!found) {
-      return {
-        success: false,
-        error:
-          'No account found with this email. Please sign up first.'
-      };
+    const users = withIds(getUsers());
+    const idx = users.findIndex((u) => u.email.toLowerCase() === cleanEmail);
+    if (idx < 0) {
+      return { success: false, error: 'No account uses this email. Create one to get started.' };
     }
 
-    if (found.password !== cleanPassword) {
-      return { success: false, error: 'Incorrect password. Please try again.' };
+    try {
+      const found = users[idx];
+      let ok;
+      if (found.hash) {
+        ok = await verifyPassword(password, found);
+      } else {
+        // Legacy plaintext account: verify once, then upgrade to a salted hash.
+        ok = found.password === password;
+        if (ok) {
+          const { salt, hash } = await hashPassword(password);
+          const upgraded = { ...found, salt, hash };
+          delete upgraded.password;
+          users[idx] = upgraded;
+          saveUsers(users);
+        }
+      }
+      if (!ok) return { success: false, error: 'Wrong password. Try again.' };
+      startSession(users[idx]);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
     }
-
-    const session = {
-      name: found.name,
-      email: found.email,
-      loginTime: new Date().toISOString()
-    };
-    setUser(session);
-    localStorage.setItem('expense_user', JSON.stringify(session));
-
-    return { success: true };
   };
 
   const logout = () => {
+    removeKey(SESSION_KEY);
     setUser(null);
-    localStorage.removeItem('expense_user');
+    setSettings(DEFAULT_SETTINGS);
   };
 
   // ============ UPDATE PROFILE ============
-  const updateProfile = (updates) => {
-    if (!user) return { success: false, error: 'Not signed in' };
+  const updateProfile = ({ name, email }) => {
+    if (!user) return { success: false, error: 'You’re signed out.' };
+    const cleanName = (name ?? user.name).trim();
+    const cleanEmail = (email ?? user.email).trim().toLowerCase();
 
-    const cleanUpdates = { ...updates };
-
-    if (cleanUpdates.name) cleanUpdates.name = cleanUpdates.name.trim();
-    if (cleanUpdates.email) cleanUpdates.email = cleanUpdates.email.trim().toLowerCase();
-
-    if (cleanUpdates.email && !validateEmail(cleanUpdates.email)) {
-      return { success: false, error: 'Email must be a valid @gmail.com address' };
+    if (!cleanName) return { success: false, error: 'Name can’t be empty.' };
+    if (!validateEmail(cleanEmail)) {
+      return { success: false, error: 'Use a Gmail address, for example you@gmail.com.' };
     }
 
-    const users = getUsers();
-    const idx = users.findIndex((u) => u.email === user.email);
-
-    if (idx < 0) {
-      return { success: false, error: 'Account not found' };
+    const users = withIds(getUsers());
+    const idx = users.findIndex((u) => u.id === user.id);
+    if (idx < 0) return { success: false, error: 'Account not found.' };
+    if (users.some((u, i) => i !== idx && u.email.toLowerCase() === cleanEmail)) {
+      return { success: false, error: 'Another account already uses this email.' };
     }
 
-    // If email is being changed, check for collision with another account
-    if (
-      cleanUpdates.email &&
-      cleanUpdates.email !== user.email &&
-      users.find((u) => u.email === cleanUpdates.email)
-    ) {
-      return {
-        success: false,
-        error: 'This email is already registered to another account.'
-      };
-    }
-
-    users[idx] = { ...users[idx], ...cleanUpdates };
+    users[idx] = { ...users[idx], name: cleanName, email: cleanEmail };
     saveUsers(users);
-
-    const updated = { ...user, ...cleanUpdates };
-    setUser(updated);
-    localStorage.setItem('expense_user', JSON.stringify(updated));
-
+    setUser(publicUser(users[idx]));
     return { success: true };
   };
 
   // ============ CHANGE PASSWORD ============
-  const changePassword = (oldPassword, newPassword, confirmPassword) => {
-    if (!user) return { success: false, error: 'Not signed in' };
+  const changePassword = async (oldPassword, newPassword, confirmPassword) => {
+    if (!user) return { success: false, error: 'You’re signed out.' };
+    const users = withIds(getUsers());
+    const idx = users.findIndex((u) => u.id === user.id);
+    if (idx < 0) return { success: false, error: 'Account not found.' };
 
-    const users = getUsers();
-    const idx = users.findIndex((u) => u.email === user.email);
+    try {
+      const found = users[idx];
+      const currentOk = found.hash ? await verifyPassword(oldPassword, found) : found.password === oldPassword;
+      if (!currentOk) return { success: false, error: 'Current password is wrong.' };
+      if (!validatePassword(newPassword)) {
+        return { success: false, error: 'New password needs at least 8 characters, including a letter and a number.' };
+      }
+      if (newPassword !== confirmPassword) return { success: false, error: 'New passwords don’t match.' };
 
-    if (idx < 0) return { success: false, error: 'Account not found' };
-
-    if (users[idx].password !== oldPassword) {
-      return { success: false, error: 'Current password is incorrect' };
+      const { salt, hash } = await hashPassword(newPassword);
+      const updated = { ...found, salt, hash };
+      delete updated.password;
+      users[idx] = updated;
+      saveUsers(users);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
     }
-
-    if (!validatePassword(newPassword)) {
-      return {
-        success: false,
-        error:
-          'Password must be at least 8 characters and contain letters and numbers'
-      };
-    }
-
-    if (newPassword !== confirmPassword) {
-      return { success: false, error: 'New passwords do not match' };
-    }
-
-    users[idx].password = newPassword;
-    saveUsers(users);
-
-    return { success: true };
   };
+
+  const updateSettings = useCallback((patch) => {
+    setSettings((prev) => {
+      const next = { ...prev, ...patch };
+      if (user) writeJSON(settingsKey(user.id), next);
+      return next;
+    });
+  }, [user]);
 
   const toggleDarkMode = () => setDarkMode((prev) => !prev);
 
-  return (
-    <AuthContext.Provider
-      value={{
-        user,
-        signup,
-        login,
-        logout,
-        loading,
-        updateProfile,
-        changePassword,
-        darkMode,
-        toggleDarkMode,
-        validateEmail,
-        validatePassword
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
-  );
+  const value = useMemo(() => ({
+    user, loading: false, signup, login, logout, updateProfile, changePassword,
+    settings, updateSettings, darkMode, toggleDarkMode, validateEmail, validatePassword,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [user, settings, darkMode, updateSettings]);
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => useContext(AuthContext);

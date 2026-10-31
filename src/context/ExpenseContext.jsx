@@ -1,158 +1,206 @@
-import React, { createContext, useState, useContext, useMemo, useEffect } from 'react';
-import { useNotification } from './NotificationContext';
+import { createContext, useCallback, useContext, useMemo } from 'react';
+import { usePersistentState } from '../lib/storage';
+import { newId } from '../lib/password';
 import { useAuth } from './AuthContext';
+import { useNotification } from './NotificationContext';
+import { EXPENSE_CATEGORIES, emptyBudgets } from '../lib/constants';
+import { formatMoney, round2, currentMonthKey, monthKeyOf, todayStr } from '../lib/format';
+import { inMonth, sortTransactions, summarize } from '../lib/finance';
 
-const ExpenseContext = createContext();
+const ExpenseContext = createContext(null);
+
+// New categories were added, so merge saved budgets over the full default set.
+const normalizeBudgets = (b) => ({ ...emptyBudgets(), ...(b && typeof b === 'object' ? b : {}) });
+const asArray = (v) => (Array.isArray(v) ? v : []);
 
 export const ExpenseProvider = ({ children }) => {
+  const { user, settings } = useAuth();
   const { addNotification } = useNotification();
-  const { user } = useAuth();
+  const uid = user?.id ?? 'guest';
+  const money = useCallback((n) => formatMoney(n, settings.currency), [settings.currency]);
 
-  // የተጠቃሚው ኢሜይል እንደ ቁልፍ እንጠቀማለን
-  const userKey = user?.email || 'guest';
+  const [transactions, setTransactions] = usePersistentState(`expense_${uid}_transactions`, [], asArray);
+  const [budgets, setBudgets] = usePersistentState(`expense_${uid}_budgets`, emptyBudgets(), normalizeBudgets);
+  const [loans, setLoans] = usePersistentState(`expense_${uid}_loans`, [], asArray);
+  const [goals, setGoals] = usePersistentState(`expense_${uid}_goals`, [], asArray);
 
-  const [transactions, setTransactions] = useState([]);
-  const [budgets, setBudgets] = useState({
-    Food: 0, Bills: 0, Shopping: 0, Transport: 0, Others: 0
-  });
-  const [loans, setLoans] = useState([]);
-  const [goals, setGoals] = useState([]);
-
-  // ተጠቃሚ ሲቀየር የራሱን መረጃ እንጭናለን
-  useEffect(() => {
-    const tKey = `expense_${userKey}_transactions`;
-    const bKey = `expense_${userKey}_budgets`;
-    const lKey = `expense_${userKey}_loans`;
-    const gKey = `expense_${userKey}_goals`;
-
-    const storedT = localStorage.getItem(tKey);
-    const storedB = localStorage.getItem(bKey);
-    const storedL = localStorage.getItem(lKey);
-    const storedG = localStorage.getItem(gKey);
-
-    setTransactions(storedT ? JSON.parse(storedT) : []);
-    setBudgets(storedB ? JSON.parse(storedB) : { Food: 0, Bills: 0, Shopping: 0, Transport: 0, Others: 0 });
-    setLoans(storedL ? JSON.parse(storedL) : []);
-    setGoals(storedG ? JSON.parse(storedG) : []);
-  }, [userKey]);
-
-  // መረጃ ሲቀየር እናስቀምጣለን
-  useEffect(() => {
-    localStorage.setItem(`expense_${userKey}_transactions`, JSON.stringify(transactions));
-  }, [transactions, userKey]);
-
-  useEffect(() => {
-    localStorage.setItem(`expense_${userKey}_budgets`, JSON.stringify(budgets));
-  }, [budgets, userKey]);
-
-  useEffect(() => {
-    localStorage.setItem(`expense_${userKey}_loans`, JSON.stringify(loans));
-  }, [loans, userKey]);
-
-  useEffect(() => {
-    localStorage.setItem(`expense_${userKey}_goals`, JSON.stringify(goals));
-  }, [goals, userKey]);
-
-  const addTransaction = (transaction) => {
-    setTransactions([{ ...transaction, id: Date.now() }, ...transactions]);
-    addNotification({
-      title: transaction.type === 'income' ? 'ገቢ ተጨምሯል' : 'ወጪ ተመዝግቧል',
-      message: `${transaction.title} · ₹${transaction.amount.toLocaleString()}`,
-      type: transaction.type === 'income' ? 'success' : 'info'
-    });
-  };
-
-  const deleteTransaction = (id) => {
-    const t = transactions.find(x => x.id === id);
-    setTransactions(transactions.filter(t => t.id !== id));
-    if (t) addNotification({ title: 'ግብይት ተሰርዟል', message: `${t.title} ተወግዷል`, type: 'warning' });
-  };
-
-  const updateBudget = (category, amount) => {
-    setBudgets({ ...budgets, [category]: Number(amount) || 0 });
-    addNotification({ title: 'በጀት ተቀይሯል', message: `${category} → ₹${(Number(amount) || 0).toLocaleString()}`, type: 'info' });
-  };
-
-  const addLoan = (loan) => {
-    setLoans([...loans, { ...loan, id: Date.now() }]);
-    addNotification({ title: 'ብድር ተጨምሯል', message: `${loan.name} · ₹${loan.total.toLocaleString()}`, type: 'info' });
-  };
-
-  const deleteLoan = (id) => {
-    const l = loans.find(x => x.id === id);
-    setLoans(loans.filter(l => l.id !== id));
-    if (l) addNotification({ title: 'ብድር ተሰርዟል', message: `${l.name} ተወግዷል`, type: 'warning' });
-  };
-
-  const updateLoan = (id, updates) => {
-    const loan = loans.find(l => l.id === id);
-    setLoans(loans.map(l => l.id === id ? { ...l, ...updates } : l));
-    if (loan && updates.paid !== undefined && updates.paid >= loan.total) {
-      addNotification({ title: '🎉 ብድር ተከፍሏል!', message: `እንኳን ደስ አለህ! ${loan.name} ሙሉ በሙሉ ተከፍሏል`, type: 'success' });
+  // ---------- Transactions ----------
+  const checkBudgetAlert = useCallback((txn, before, after) => {
+    if (!settings.budgetAlerts || txn.type !== 'expense') return;
+    if (monthKeyOf(txn.date) !== currentMonthKey()) return;
+    const limit = budgets[txn.category] || 0;
+    if (limit <= 0) return;
+    const was = before / limit;
+    const now = after / limit;
+    if (was < 1 && now >= 1) {
+      addNotification({
+        title: `${txn.category} budget exceeded`,
+        message: `${money(after)} spent against a ${money(limit)} limit this month.`,
+        type: 'error',
+      });
+    } else if (was < 0.8 && now >= 0.8) {
+      addNotification({
+        title: `${txn.category} budget at ${Math.round(now * 100)}%`,
+        message: `${money(limit - after)} left this month.`,
+        type: 'warning',
+      });
     }
-  };
+  }, [settings.budgetAlerts, budgets, addNotification, money]);
 
-  const addGoal = (goal) => {
-    setGoals([...goals, { ...goal, id: Date.now() }]);
-    addNotification({ title: 'ግብ ተፈጥሯል', message: `${goal.name} · ₹${goal.target.toLocaleString()}`, type: 'success' });
-  };
+  const addTransaction = useCallback((input) => {
+    const txn = { ...input, amount: round2(input.amount), id: Date.now() + Math.floor(Math.random() * 1000) };
+    const spentBefore = inMonth(transactions, monthKeyOf(txn.date))
+      .filter((t) => t.type === 'expense' && t.category === txn.category)
+      .reduce((s, t) => s + t.amount, 0);
+    setTransactions((prev) => [txn, ...prev]);
+    addNotification({
+      title: txn.type === 'income' ? 'Income added' : 'Expense added',
+      message: `${txn.title} · ${money(txn.amount)}`,
+      type: txn.type === 'income' ? 'success' : 'info',
+    });
+    checkBudgetAlert(txn, spentBefore, spentBefore + txn.amount);
+    return txn;
+  }, [transactions, setTransactions, addNotification, money, checkBudgetAlert]);
 
-  const deleteGoal = (id) => {
-    const g = goals.find(x => x.id === id);
-    setGoals(goals.filter(g => g.id !== id));
-    if (g) addNotification({ title: 'ግብ ተሰርዟል', message: `${g.name} ተወግዷል`, type: 'warning' });
-  };
+  const updateTransaction = useCallback((id, patch) => {
+    setTransactions((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch, amount: round2(patch.amount ?? t.amount) } : t)));
+    addNotification({ title: 'Transaction updated', message: patch.title || '', type: 'success', persist: false });
+  }, [setTransactions, addNotification]);
+
+  const deleteTransaction = useCallback((id) => {
+    const target = transactions.find((t) => t.id === id);
+    if (!target) return;
+    setTransactions((prev) => prev.filter((t) => t.id !== id));
+    addNotification({
+      title: 'Transaction deleted',
+      message: target.title,
+      type: 'warning',
+      persist: false,
+      action: {
+        label: 'Undo',
+        onClick: () => setTransactions((prev) => (prev.some((t) => t.id === id) ? prev : [target, ...prev])),
+      },
+    });
+  }, [transactions, setTransactions, addNotification]);
+
+  // ---------- Budgets ----------
+  const updateBudget = useCallback((category, amount) => {
+    const value = Math.max(0, round2(amount) || 0);
+    setBudgets((prev) => ({ ...prev, [category]: value }));
+    addNotification({
+      title: 'Budget updated',
+      message: value ? `${category} · ${money(value)} a month` : `${category} limit removed`,
+      type: 'info',
+      persist: false,
+    });
+  }, [setBudgets, addNotification, money]);
+
+  // ---------- Loans ----------
+  const addLoan = useCallback((loan) => {
+    setLoans((prev) => [...prev, { ...loan, id: newId() }]);
+    addNotification({ title: 'Loan added', message: `${loan.name} · ${money(loan.total)}`, type: 'info' });
+  }, [setLoans, addNotification, money]);
+
+  const deleteLoan = useCallback((id) => {
+    const l = loans.find((x) => x.id === id);
+    setLoans((prev) => prev.filter((x) => x.id !== id));
+    if (l) addNotification({ title: 'Loan deleted', message: l.name, type: 'warning', persist: false });
+  }, [loans, setLoans, addNotification]);
+
+  /** Pay one EMI: advances the loan, moves the next due date a month on, and logs the expense. */
+  const payLoanEmi = useCallback((id, addMonthsToDate) => {
+    const loan = loans.find((l) => l.id === id);
+    if (!loan || loan.paid >= loan.total) return;
+    const amount = round2(Math.min(loan.emi, loan.total - loan.paid));
+    const paid = round2(loan.paid + amount);
+    const done = paid >= loan.total;
+    setLoans((prev) => prev.map((l) => (
+      l.id === id ? { ...l, paid, dueDate: done ? l.dueDate : addMonthsToDate(l.dueDate, 1) } : l
+    )));
+    setTransactions((prev) => [{
+      id: Date.now(), type: 'expense', category: 'Bills', amount,
+      title: `${loan.name} EMI`, date: todayStr(),
+    }, ...prev]);
+    addNotification(done
+      ? { title: 'Loan paid off', message: `${loan.name} is fully paid. Well done.`, type: 'success' }
+      : { title: 'EMI paid', message: `${loan.name} · ${money(amount)} recorded as a Bills expense`, type: 'success' });
+  }, [loans, setLoans, setTransactions, addNotification, money]);
+
+  // ---------- Goals ----------
+  const addGoal = useCallback((goal) => {
+    setGoals((prev) => [...prev, { ...goal, id: newId() }]);
+    addNotification({ title: 'Goal created', message: `${goal.name} · ${money(goal.target)}`, type: 'success' });
+  }, [setGoals, addNotification, money]);
+
+  const addGoalFunds = useCallback((id, amount) => {
+    const goal = goals.find((g) => g.id === id);
+    if (!goal || !(amount > 0)) return;
+    const current = round2(goal.current + amount);
+    setGoals((prev) => prev.map((g) => (g.id === id ? { ...g, current } : g)));
+    addNotification(goal.current < goal.target && current >= goal.target
+      ? { title: 'Goal reached', message: `${goal.name} is fully funded.`, type: 'success' }
+      : { title: 'Funds added', message: `${goal.name} · +${money(amount)}`, type: 'success', persist: false });
+  }, [goals, setGoals, addNotification, money]);
+
+  const deleteGoal = useCallback((id) => {
+    const g = goals.find((x) => x.id === id);
+    setGoals((prev) => prev.filter((x) => x.id !== id));
+    if (g) addNotification({ title: 'Goal deleted', message: g.name, type: 'warning', persist: false });
+  }, [goals, setGoals, addNotification]);
+
+  // ---------- Backup / restore ----------
+  const exportData = useCallback(() => ({
+    app: 'expense-tracker', version: 2, exportedAt: new Date().toISOString(),
+    transactions, budgets, loans, goals,
+  }), [transactions, budgets, loans, goals]);
+
+  const importData = useCallback((data) => {
+    if (!data || data.app !== 'expense-tracker' || !Array.isArray(data.transactions)) {
+      return { success: false, error: 'This file isn’t an Expense Tracker backup.' };
+    }
+    setTransactions(asArray(data.transactions));
+    setBudgets(normalizeBudgets(data.budgets));
+    setLoans(asArray(data.loans));
+    setGoals(asArray(data.goals));
+    addNotification({ title: 'Backup restored', message: `${data.transactions.length} transactions loaded`, type: 'success' });
+    return { success: true };
+  }, [setTransactions, setBudgets, setLoans, setGoals, addNotification]);
+
+  const clearAllData = useCallback(() => {
+    setTransactions([]); setBudgets(emptyBudgets()); setLoans([]); setGoals([]);
+    addNotification({ title: 'All data deleted', type: 'warning', persist: false });
+  }, [setTransactions, setBudgets, setLoans, setGoals, addNotification]);
+
+  // ---------- Derived ----------
+  const sorted = useMemo(() => sortTransactions(transactions), [transactions]);
 
   const stats = useMemo(() => {
-    let income = 0, expenses = 0;
-    const categories = { Food: 0, Bills: 0, Shopping: 0, Transport: 0, Others: 0 };
-    const monthly = {};
+    const all = summarize(transactions);
+    const month = currentMonthKey();
+    const [y, m] = month.split('-').map(Number);
+    const prev = `${m === 1 ? y - 1 : y}-${String(m === 1 ? 12 : m - 1).padStart(2, '0')}`;
+    const thisMonth = summarize(inMonth(transactions, month));
+    const lastMonth = summarize(inMonth(transactions, prev));
+    const totalBudget = EXPENSE_CATEGORIES.reduce((s, c) => s + (budgets[c] || 0), 0);
+    // Only count spending in categories that actually have a limit, so the ratio is meaningful.
+    const budgetedSpent = EXPENSE_CATEGORIES.reduce(
+      (s, c) => s + ((budgets[c] || 0) > 0 ? thisMonth.byCategory[c] || 0 : 0), 0);
+    return { all, thisMonth, lastMonth, totalBudget, budgetedSpent, month };
+  }, [transactions, budgets]);
 
-    transactions.forEach(t => {
-      if (t.type === 'income') income += Number(t.amount);
-      else {
-        expenses += Number(t.amount);
-        categories[t.category] !== undefined
-          ? categories[t.category] += Number(t.amount)
-          : categories['Others'] += Number(t.amount);
-      }
-      if (t.date) {
-        const d = new Date(t.date);
-        const key = d.toLocaleString('en-US', { month: 'short' }) + ' ' + d.getFullYear();
-        if (!monthly[key]) monthly[key] = { income: 0, expense: 0, sortDate: d };
-        if (t.type === 'income') monthly[key].income += Number(t.amount);
-        else monthly[key].expense += Number(t.amount);
-      }
-    });
+  const value = useMemo(() => ({
+    transactions: sorted, addTransaction, updateTransaction, deleteTransaction,
+    budgets, updateBudget,
+    loans, addLoan, deleteLoan, payLoanEmi,
+    goals, addGoal, addGoalFunds, deleteGoal,
+    exportData, importData, clearAllData,
+    stats, money, currency: settings.currency,
+  }), [sorted, addTransaction, updateTransaction, deleteTransaction, budgets, updateBudget,
+    loans, addLoan, deleteLoan, payLoanEmi, goals, addGoal, addGoalFunds, deleteGoal,
+    exportData, importData, clearAllData, stats, money, settings.currency]);
 
-    const balance = income - expenses;
-
-    const categoryData = Object.keys(categories).map(key => ({
-      name: key, value: categories[key],
-      color: key === 'Food' ? '#4f46e5' :
-             key === 'Bills' ? '#8b5cf6' :
-             key === 'Shopping' ? '#f59e0b' :
-             key === 'Transport' ? '#22c55e' : '#ef4444'
-    })).filter(c => c.value > 0);
-
-    const chartData = Object.keys(monthly)
-      .sort((a, b) => monthly[a].sortDate - monthly[b].sortDate)
-      .map(key => ({ name: key.split(' ')[0], income: monthly[key].income, expense: monthly[key].expense }));
-
-    return { income, expenses, balance, categoryData, chartData, categories };
-  }, [transactions]);
-
-  return (
-    <ExpenseContext.Provider value={{
-      transactions, addTransaction, deleteTransaction,
-      budgets, updateBudget,
-      loans, addLoan, deleteLoan, updateLoan,
-      goals, addGoal, deleteGoal,
-      stats
-    }}>
-      {children}
-    </ExpenseContext.Provider>
-  );
+  return <ExpenseContext.Provider value={value}>{children}</ExpenseContext.Provider>;
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useExpense = () => useContext(ExpenseContext);

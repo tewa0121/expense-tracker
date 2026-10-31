@@ -1,88 +1,113 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { useState } from 'react';
-import { AuthProvider } from './context/AuthContext';
-import { ExpenseProvider } from './context/ExpenseContext';
+import { lazy, Suspense, useEffect, useState } from 'react';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { NotificationProvider } from './context/NotificationContext';
+import { ExpenseProvider } from './context/ExpenseContext';
+import { UIProvider } from './context/UIContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import Sidebar from './components/Sidebar';
-import Dashboard from './pages/Dashboard';
-import Transactions from './pages/Transactions';
-import Budgets from './pages/Budgets';
-import Goals from './pages/Goals';
-import Loans from './pages/Loans';
-import Reports from './pages/Reports';
-import Settings from './pages/Settings';
-import Profile from './pages/Profile';
-import Login from './pages/Login';
+import Header from './components/Header';
+import BottomNav from './components/BottomNav';
+import Toaster from './components/Toaster';
+import { Skeleton } from './components/ui';
+
+// Pages are code-split so the charts and PDF libraries aren't downloaded up front.
+const Login = lazy(() => import('./pages/Login'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Transactions = lazy(() => import('./pages/Transactions'));
+const Budgets = lazy(() => import('./pages/Budgets'));
+const Goals = lazy(() => import('./pages/Goals'));
+const Loans = lazy(() => import('./pages/Loans'));
+const Reports = lazy(() => import('./pages/Reports'));
+const Settings = lazy(() => import('./pages/Settings'));
+const Profile = lazy(() => import('./pages/Profile'));
+
+const PageFallback = () => (
+  <div className="mx-auto max-w-6xl space-y-4 px-4 py-8 md:px-8" aria-busy="true">
+    <Skeleton className="h-10 w-56" />
+    <Skeleton className="h-40" />
+    <div className="grid gap-4 md:grid-cols-2"><Skeleton className="h-64" /><Skeleton className="h-64" /></div>
+  </div>
+);
 
 function App() {
   return (
     <AuthProvider>
       <NotificationProvider>
         <ExpenseProvider>
-          <Router>
-            <Routes>
-              <Route path="/login" element={<Login />} />
-              <Route
-                path="/*"
-                element={
-                  <ProtectedRoute>
-                    <AppShell />
-                  </ProtectedRoute>
-                }
-              />
-            </Routes>
-          </Router>
+          <UIProvider>
+            <BrowserRouter>
+              <Suspense fallback={<PageFallback />}>
+                <Routes>
+                  <Route path="/login" element={<LoginRoute />} />
+                  <Route path="/*" element={<ProtectedRoute><AppShell /></ProtectedRoute>} />
+                </Routes>
+              </Suspense>
+              <Toaster />
+            </BrowserRouter>
+          </UIProvider>
         </ExpenseProvider>
       </NotificationProvider>
     </AuthProvider>
   );
 }
 
+/** Signed-in visitors skip the login screen. */
+function LoginRoute() {
+  const { user } = useAuth();
+  const { state } = useLocation();
+  if (user) return <Navigate to={state?.from || '/'} replace />;
+  return <Login />;
+}
+
 function AppShell() {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const { pathname } = useLocation();
 
-  const openDrawer = () => setDrawerOpen(true);
-  const closeDrawer = () => setDrawerOpen(false);
+  // New page → start at the top.
+  useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
+
+  useEffect(() => {
+    if (!drawerOpen) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setDrawerOpen(false); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [drawerOpen]);
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-gray-50 dark:bg-gray-900 font-sans flex">
-      {/* Desktop sidebar */}
-      <aside className="hidden md:block w-64 flex-shrink-0 h-screen">
+    <div className="min-h-dvh lg:flex">
+      <aside className="sticky top-0 hidden h-dvh w-64 flex-shrink-0 lg:block">
         <Sidebar />
       </aside>
 
-      {/* Main column */}
-      <div className="flex-1 flex flex-col h-screen min-w-0">
-        <main
-          className="flex-1 overflow-y-auto overscroll-contain"
-          style={{ WebkitOverflowScrolling: 'touch' }}
-        >
-          <Routes>
-            <Route path="/" element={<Dashboard onMenuClick={openDrawer} />} />
-            <Route path="/transactions" element={<Transactions onMenuClick={openDrawer} />} />
-            <Route path="/budgets" element={<Budgets onMenuClick={openDrawer} />} />
-            <Route path="/goals" element={<Goals onMenuClick={openDrawer} />} />
-            <Route path="/loans" element={<Loans onMenuClick={openDrawer} />} />
-            <Route path="/reports" element={<Reports onMenuClick={openDrawer} />} />
-            <Route path="/settings" element={<Settings onMenuClick={openDrawer} />} />
-            <Route path="/profile" element={<Profile onMenuClick={openDrawer} />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+      <div className="min-w-0 flex-1 pb-24 lg:pb-0">
+        <Header />
+        <main id="main">
+          <Suspense fallback={<PageFallback />}>
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/transactions" element={<Transactions />} />
+              <Route path="/budgets" element={<Budgets />} />
+              <Route path="/goals" element={<Goals />} />
+              <Route path="/loans" element={<Loans />} />
+              <Route path="/reports" element={<Reports />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/profile" element={<Profile />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
         </main>
       </div>
 
-      {/* Mobile drawer */}
+      <BottomNav onMore={() => setDrawerOpen(true)} />
+
       {drawerOpen && (
-        <>
-          <div
-            className="fixed inset-0 bg-black/50 z-40 md:hidden animate-fade-in"
-            onClick={closeDrawer}
-          />
-          <div className="fixed top-0 left-0 h-full w-64 z-50 md:hidden shadow-2xl animate-slide-in">
-            <Sidebar onClose={closeDrawer} isMobile />
+        <div className="lg:hidden">
+          <div className="fixed inset-0 z-50 animate-fade-in bg-side/60" onClick={() => setDrawerOpen(false)} />
+          <div className="fixed left-0 top-0 z-50 h-dvh w-72 animate-slide-in shadow-pop" role="dialog" aria-modal="true" aria-label="Menu">
+            <Sidebar isMobile onClose={() => setDrawerOpen(false)} />
           </div>
-        </>
+        </div>
       )}
     </div>
   );
