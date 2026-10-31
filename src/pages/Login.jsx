@@ -1,214 +1,179 @@
-import React, { useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState } from 'react';
+import { AlertCircle, Check, Eye, EyeOff, Loader2, Lock, Mail, User } from 'lucide-react';
+import Logo from '../components/Logo';
 import { useAuth } from '../context/AuthContext';
-import { Wallet, Mail, Lock, User, AlertCircle, CheckCircle } from 'lucide-react';
+
+const Field = ({ id, label, icon: Icon, hint, children }) => (
+  <div>
+    <label htmlFor={id} className="label">{label}</label>
+    <div className="relative">
+      <Icon className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" size={17} aria-hidden="true" />
+      {children}
+    </div>
+    {hint && <p className="hint">{hint}</p>}
+  </div>
+);
+
+const Rule = ({ ok, children }) => (
+  <li className={`flex items-center gap-1.5 text-xs ${ok ? 'text-gain' : 'text-muted'}`}>
+    <span className={`flex h-4 w-4 items-center justify-center rounded-full ${ok ? 'bg-gain/15' : 'bg-surface-2'}`}>
+      {ok && <Check size={11} strokeWidth={3} />}
+    </span>
+    {children}
+  </li>
+);
+
+/** Decorative preview of the product. The figures are sample data, not the user's. */
+const Preview = () => {
+  const bars = [38, 62, 45, 78, 56, 90];
+  const rows = [
+    ['Salary', '+ 28,000', 'text-brand'],
+    ['Groceries', '− 1,450', 'text-white'],
+    ['Transport', '− 320', 'text-white'],
+  ];
+  return (
+    <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-white/[0.06] p-5 backdrop-blur" aria-hidden="true">
+      <p className="text-xs text-white/55">Sample balance</p>
+      <p className="font-display text-4xl font-bold text-white">Br 26,230</p>
+      <div className="mt-5 flex h-16 items-end gap-2">
+        {bars.map((h, i) => (
+          <span key={i} className="flex-1 rounded-t-md bg-brand" style={{ height: `${h}%`, opacity: 0.35 + i * 0.13 }} />
+        ))}
+      </div>
+      <ul className="mt-5 divide-y divide-white/10 text-sm">
+        {rows.map(([name, amt, cls]) => (
+          <li key={name} className="flex justify-between py-2.5 text-white/70">
+            <span>{name}</span><span className={`num font-semibold ${cls}`}>{amt}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+};
 
 const Login = () => {
   const { login, signup } = useAuth();
-  const navigate = useNavigate();
   const [isSignup, setIsSignup] = useState(false);
+  const [form, setForm] = useState({ name: '', email: '', password: '', confirm: '' });
+  const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  const formRef = useRef(null);
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-    setSuccess('');
-
-    // ---- READ VALUES DIRECTLY FROM THE DOM (bypasses React state issues) ----
-    const form = formRef.current;
-    if (!form) return;
-
-    const name = (form.querySelector('input[name="name"]')?.value || '').trim();
-    const email = (form.querySelector('input[name="email"]')?.value || '').trim();
-    const password = form.querySelector('input[name="password"]')?.value || '';
-    const confirm = form.querySelector('input[name="confirm"]')?.value || '';
-
-    // ---- DEBUG: log what we actually got ----
-    console.log('Form values read from DOM:', { name, email, password: '***', confirm: '***' });
-
-    if (isSignup) {
-      // Front-end quick checks (backend also validates)
-      if (!name || !email || !password || !confirm) {
-        return setError('All fields are required');
-      }
-
-      const res = signup({
-        name,
-        email,
-        password,
-        confirmPassword: confirm
-      });
-
-      if (!res.success) return setError(res.error);
-      setSuccess('Account created successfully! Redirecting...');
-    } else {
-      if (!email || !password) {
-        return setError('Email and password are required');
-      }
-
-      const res = login({ email, password });
-      if (!res.success) return setError(res.error);
-      setSuccess('Signed in successfully! Redirecting...');
-    }
-
-    setTimeout(() => navigate('/'), 500);
+    setBusy(true);
+    const res = isSignup
+      ? await signup({ name: form.name, email: form.email, password: form.password, confirmPassword: form.confirm })
+      : await login({ email: form.email, password: form.password });
+    setBusy(false);
+    if (!res.success) setError(res.error);
+    // On success AuthContext sets the user and the route redirects to the dashboard.
   };
 
   const switchMode = () => {
-    setIsSignup(!isSignup);
+    setIsSignup((v) => !v);
     setError('');
-    setSuccess('');
+    setForm((f) => ({ ...f, password: '', confirm: '' }));
   };
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <div className="flex items-center justify-center gap-3 mb-8">
-          <div className="bg-indigo-600 p-3 rounded-xl text-white">
-            <Wallet size={28} />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Expense Tracker</h1>
-            <p className="text-sm text-gray-500 dark:text-gray-400">Manage your finances smartly</p>
-          </div>
-        </div>
+  const pw = form.password;
+  const input = 'input py-3 pl-10';
 
-        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl border border-gray-100 dark:border-gray-700 p-8">
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
-            {isSignup ? 'Create Account' : 'Welcome Back'}
-          </h2>
-          <p className="text-gray-500 dark:text-gray-400 mb-6 text-sm">
-            {isSignup ? 'Sign up to start tracking expenses' : 'Sign in to continue to your dashboard'}
+  return (
+    <div className="min-h-dvh lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
+      <aside className="relative hidden flex-col justify-between overflow-hidden bg-side p-12 text-white lg:flex">
+        <Logo light />
+        <div className="relative z-10 space-y-10">
+          <h1 className="max-w-md text-5xl font-bold leading-[1.05]">
+            Know where your money goes.
+          </h1>
+          <Preview />
+        </div>
+        <p className="text-sm text-white/50">Your data stays in this browser. Nothing is sent to a server.</p>
+        <div className="pointer-events-none absolute -bottom-40 -right-32 h-96 w-96 rounded-full bg-brand/10 blur-3xl" />
+      </aside>
+
+      <main className="flex min-h-dvh items-center justify-center px-5 py-10">
+        <div className="w-full max-w-md">
+          <div className="mb-8 lg:hidden"><Logo /></div>
+
+          <h2 className="text-3xl font-bold">{isSignup ? 'Create your account' : 'Welcome back'}</h2>
+          <p className="mb-7 mt-1.5 text-sm text-muted">
+            {isSignup ? 'Start tracking income, spending and goals.' : 'Sign in to see your dashboard.'}
           </p>
 
           {error && (
-            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm p-3 rounded-xl mb-4 flex items-start gap-2">
-              <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+            <div role="alert" className="mb-5 flex items-start gap-2 rounded-xl bg-loss/10 px-3.5 py-3 text-sm font-medium text-loss">
+              <AlertCircle size={17} className="mt-0.5 flex-shrink-0" aria-hidden="true" />
               <span>{error}</span>
             </div>
           )}
 
-          {success && (
-            <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-400 text-sm p-3 rounded-xl mb-4 flex items-start gap-2">
-              <CheckCircle size={16} className="mt-0.5 flex-shrink-0" />
-              <span>{success}</span>
-            </div>
-          )}
-
-          {/*
-            KEY FIX: Using `key` forces React to remount the form
-            when switching between login/signup, so no stale state.
-            autoComplete="off" prevents browser from silently autofilling.
-          */}
-          <form
-            key={isSignup ? 'signup' : 'login'}
-            ref={formRef}
-            onSubmit={handleSubmit}
-            className="space-y-4"
-            autoComplete="off"
-            noValidate
-          >
+          <form key={isSignup ? 'signup' : 'login'} onSubmit={handleSubmit} className="space-y-4" noValidate>
             {isSignup && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Full Name
-                </label>
-                <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                  <input
-                    type="text"
-                    name="name"
-                    placeholder="Tewachew Melaku"
-                    autoComplete="off"
-                    className="w-full pl-10 pr-4 py-3 border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                  />
-                </div>
-              </div>
+              <Field id="name" label="Full name" icon={User}>
+                <input id="name" className={input} value={form.name} onChange={set('name')} autoComplete="name" placeholder="Tewachew Melaku" />
+              </Field>
             )}
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Email
-              </label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                <input
-                  type="email"
-                  name="email"
-                  placeholder="you@gmail.com"
-                  autoComplete="off"
-                  className="w-full pl-10 pr-4 py-3 border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                />
-              </div>
-              <p className="text-xs text-gray-400 mt-1">Must be a @gmail.com address</p>
-            </div>
+            <Field id="email" label="Email" icon={Mail} hint={isSignup ? 'Gmail addresses only.' : undefined}>
+              <input id="email" type="email" className={input} value={form.email} onChange={set('email')} autoComplete="username" placeholder="you@gmail.com" inputMode="email" />
+            </Field>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Password
-              </label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                <input
-                  type="password"
-                  name="password"
-                  placeholder="••••••••"
-                  autoComplete="new-password"
-                  className="w-full pl-10 pr-4 py-3 border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                />
-              </div>
-              {isSignup && (
-                <p className="text-xs text-gray-400 mt-1">
-                  At least 8 characters with letters and numbers
-                </p>
-              )}
-            </div>
+            <Field id="password" label="Password" icon={Lock}>
+              <input
+                id="password"
+                type={showPw ? 'text' : 'password'}
+                className={`${input} pr-11`}
+                value={form.password}
+                onChange={set('password')}
+                autoComplete={isSignup ? 'new-password' : 'current-password'}
+                placeholder="••••••••"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPw((v) => !v)}
+                className="icon-btn absolute right-1.5 top-1/2 h-8 w-8 -translate-y-1/2"
+                aria-label={showPw ? 'Hide password' : 'Show password'}
+              >
+                {showPw ? <EyeOff size={17} /> : <Eye size={17} />}
+              </button>
+            </Field>
 
             {isSignup && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Confirm Password
-                </label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                  <input
-                    type="password"
-                    name="confirm"
-                    placeholder="••••••••"
-                    autoComplete="new-password"
-                    className="w-full pl-10 pr-4 py-3 border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                  />
-                </div>
-              </div>
+              <>
+                <ul className="flex flex-wrap gap-x-4 gap-y-1.5" aria-label="Password requirements">
+                  <Rule ok={pw.length >= 8}>8+ characters</Rule>
+                  <Rule ok={/[A-Za-z]/.test(pw)}>A letter</Rule>
+                  <Rule ok={/\d/.test(pw)}>A number</Rule>
+                </ul>
+                <Field id="confirm" label="Confirm password" icon={Lock}>
+                  <input id="confirm" type={showPw ? 'text' : 'password'} className={input} value={form.confirm} onChange={set('confirm')} autoComplete="new-password" placeholder="••••••••" />
+                </Field>
+              </>
             )}
 
-            <button
-              type="submit"
-              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-medium transition-colors shadow-lg shadow-indigo-200 dark:shadow-none"
-            >
-              {isSignup ? 'Create Account' : 'Sign In'}
+            <button type="submit" disabled={busy} className="btn-primary w-full py-3 text-base">
+              {busy && <Loader2 size={18} className="animate-spin" aria-hidden="true" />}
+              {isSignup ? 'Create account' : 'Sign in'}
             </button>
           </form>
 
-          <div className="mt-6 text-center text-sm text-gray-500 dark:text-gray-400">
-            {isSignup ? 'Already have an account?' : "Don't have an account?"}{' '}
-            <button
-              onClick={switchMode}
-              className="text-indigo-600 dark:text-indigo-400 font-medium hover:underline"
-            >
-              {isSignup ? 'Sign In' : 'Sign Up'}
+          <p className="mt-6 text-center text-sm text-muted">
+            {isSignup ? 'Already have an account?' : 'New here?'}{' '}
+            <button type="button" onClick={switchMode} className="font-semibold text-fg underline decoration-brand decoration-2 underline-offset-4 hover:decoration-fg">
+              {isSignup ? 'Sign in' : 'Create an account'}
             </button>
-          </div>
-        </div>
+          </p>
 
-        <p className="text-center text-xs text-gray-400 dark:text-gray-500 mt-8">
-          © 2025 Expense Tracker ·{' '}
-          <span className="font-bold text-gray-600 dark:text-gray-300">Built by Tewachew Melaku</span>
-        </p>
-      </div>
+          <p className="mt-10 text-center text-xs text-faint">
+            © {new Date().getFullYear()} Expense Tracker · Built by <span className="font-semibold text-muted">Tewachew Melaku</span>
+          </p>
+        </div>
+      </main>
     </div>
   );
 };
