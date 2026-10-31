@@ -1,98 +1,153 @@
-import React from 'react';
-import Header from '../components/Header';
+import { useMemo, useState } from 'react';
+import { Download, FileSpreadsheet, Loader2 } from 'lucide-react';
 import { useExpense } from '../context/ExpenseContext';
 import { useAuth } from '../context/AuthContext';
 import { useNotification } from '../context/NotificationContext';
-import IncomeExpenseChart from '../components/IncomeExpenseChart';
-import SpendingPieChart from '../components/SpendingPieChart';
-import { exportTransactionsPdf } from '../utils/exportPdf';
-import { TrendingUp, TrendingDown, Wallet, Percent, Download } from 'lucide-react';
+import { CategoryDonut, TrendChart } from '../components/Charts';
+import { Page, PageHeader, ProgressBar } from '../components/ui';
+import { categoryMeta } from '../lib/constants';
+import { PERIOD_LABELS, categoryData, inRange, monthlySeries, periodRange, summarize } from '../lib/finance';
+import { shortDate } from '../lib/format';
+import { exportTransactionsCsv } from '../utils/exportCsv';
 
-const Reports = ({ onMenuClick }) => {
-  const { stats, transactions } = useExpense();
+const Reports = () => {
+  const { transactions, money, currency } = useExpense();
   const { user } = useAuth();
   const { addNotification } = useNotification();
+  const [period, setPeriod] = useState('month');
+  const [exporting, setExporting] = useState(false);
 
-  const savingsRate = stats.income > 0
-    ? Math.round(((stats.income - stats.expenses) / stats.income) * 100)
-    : 0;
+  const range = useMemo(() => periodRange(period), [period]);
+  const rows = useMemo(() => inRange(transactions, range), [transactions, range]);
+  const summary = useMemo(() => summarize(rows), [rows]);
+  const series = useMemo(
+    () => monthlySeries(transactions, range.endKey, Math.max(range.months, period === '3m' ? 3 : 6)),
+    [transactions, range, period]
+  );
+  const cats = useMemo(() => categoryData(summary.byCategory), [summary]);
+  const biggest = useMemo(
+    () => rows.filter((t) => t.type === 'expense').reduce((m, t) => (!m || t.amount > m.amount ? t : m), null),
+    [rows]
+  );
 
-  const handleExport = () => {
-    if (transactions.length === 0) {
-      addNotification({ title: 'Export failed', message: 'No transactions to export. Add some data first.', type: 'warning' });
+  const exportPdf = async () => {
+    if (!rows.length) {
+      addNotification({ title: 'Nothing to export', message: 'There are no transactions in this period.', type: 'warning', persist: false });
       return;
     }
-    exportTransactionsPdf(transactions, stats, user);
-    addNotification({ title: 'PDF exported', message: `Report with ${transactions.length} transactions downloaded`, type: 'success' });
+    setExporting(true);
+    try {
+      const { exportReportPdf } = await import('../utils/exportPdf');
+      await exportReportPdf({ transactions: rows, summary, user, currency, periodLabel: PERIOD_LABELS[period] });
+      addNotification({ title: 'PDF downloaded', message: `${rows.length} transactions · ${PERIOD_LABELS[period]}`, type: 'success', persist: false });
+    } catch {
+      addNotification({ title: 'Couldn’t create the PDF', message: 'Check your connection and try again.', type: 'error', persist: false });
+    } finally {
+      setExporting(false);
+    }
   };
 
+  const stats = [
+    ['Income', money(summary.income), 'text-gain'],
+    ['Spent', money(summary.expenses), ''],
+    ['Net', money(summary.balance), summary.balance < 0 ? 'text-loss' : ''],
+    ['Savings rate', summary.savingsRate === null ? '–' : `${summary.savingsRate}%`, summary.savingsRate !== null && summary.savingsRate < 0 ? 'text-loss' : ''],
+  ];
+
   return (
-    <div className="bg-gray-50 dark:bg-gray-900 min-h-full">
-      <Header onMenuClick={onMenuClick} />
-      <main className="p-4 md:p-8 max-w-6xl mx-auto">
-        <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 md:mb-8 gap-3">
-          <div>
-            <h2 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white">Reports</h2>
-            <p className="text-gray-500 dark:text-gray-400 mt-1 text-sm">Detailed breakdown of your financial activity</p>
-          </div>
-          <button onClick={handleExport} disabled={transactions.length === 0} className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 md:px-5 py-2.5 rounded-xl font-medium flex items-center justify-center gap-2 shadow-lg shadow-indigo-200 dark:shadow-none transition-all">
-            <Download size={18} /> Download PDF
-          </button>
-        </div>
+    <Page>
+      <PageHeader
+        title="Reports"
+        subtitle="See how your money moved over a period."
+        action={
+          <>
+            <button type="button" className="btn-secondary" disabled={!rows.length} onClick={() => exportTransactionsCsv(rows)}>
+              <FileSpreadsheet size={17} /> CSV
+            </button>
+            <button type="button" className="btn-primary" onClick={exportPdf} disabled={!rows.length || exporting}>
+              {exporting ? <Loader2 size={17} className="animate-spin" /> : <Download size={17} />} PDF report
+            </button>
+          </>
+        }
+      />
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-6 mb-6">
-          <div className="bg-white dark:bg-gray-800 p-4 md:p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
-            <div className="flex items-center gap-2 text-green-500 mb-2"><TrendingUp size={16} /><span className="text-[10px] md:text-xs font-medium uppercase">Income</span></div>
-            <p className="text-lg md:text-2xl font-bold text-gray-900 dark:text-white">₹{stats.income.toLocaleString()}</p>
-          </div>
-          <div className="bg-white dark:bg-gray-800 p-4 md:p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
-            <div className="flex items-center gap-2 text-red-500 mb-2"><TrendingDown size={16} /><span className="text-[10px] md:text-xs font-medium uppercase">Expenses</span></div>
-            <p className="text-lg md:text-2xl font-bold text-gray-900 dark:text-white">₹{stats.expenses.toLocaleString()}</p>
-          </div>
-          <div className="bg-white dark:bg-gray-800 p-4 md:p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
-            <div className="flex items-center gap-2 text-indigo-500 mb-2"><Wallet size={16} /><span className="text-[10px] md:text-xs font-medium uppercase">Balance</span></div>
-            <p className="text-lg md:text-2xl font-bold text-gray-900 dark:text-white">₹{stats.balance.toLocaleString()}</p>
-          </div>
-          <div className="bg-white dark:bg-gray-800 p-4 md:p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
-            <div className="flex items-center gap-2 text-purple-500 mb-2"><Percent size={16} /><span className="text-[10px] md:text-xs font-medium uppercase">Savings</span></div>
-            <p className="text-lg md:text-2xl font-bold text-gray-900 dark:text-white">{savingsRate}%</p>
-          </div>
+      <div className="-mx-4 mb-6 overflow-x-auto px-4 md:mx-0 md:px-0" role="group" aria-label="Period">
+        <div className="inline-flex gap-1 rounded-xl bg-surface-2 p-1">
+          {Object.entries(PERIOD_LABELS).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              aria-pressed={period === key}
+              onClick={() => setPeriod(key)}
+              className={`whitespace-nowrap rounded-lg px-3.5 py-1.5 text-sm font-semibold transition ${period === key ? 'bg-surface text-fg shadow-lift' : 'text-muted hover:text-fg'}`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
+      </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 mb-6">
-          <IncomeExpenseChart data={stats.chartData} />
-          <SpendingPieChart data={stats.categoryData} />
-        </div>
-
-        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
-          <div className="p-4 md:p-5 border-b border-gray-100 dark:border-gray-700">
-            <h3 className="text-base md:text-lg font-bold text-gray-900 dark:text-white">Recent Transactions ({transactions.length})</h3>
+      <div className="card mb-6 grid grid-cols-2 md:grid-cols-4">
+        {stats.map(([label, value, cls], i) => (
+          <div key={label} className={`p-4 md:p-5 ${i % 2 === 1 ? 'border-l border-line md:border-l-0' : ''} ${i > 1 ? 'border-t border-line md:border-t-0' : ''} ${i > 0 ? 'md:border-l md:border-line' : ''}`}>
+            <p className="text-xs text-muted md:text-sm">{label}</p>
+            <p className={`num mt-1 font-display text-xl font-bold md:text-2xl ${cls}`}>{value}</p>
           </div>
-          {transactions.length === 0 ? (
-            <div className="p-10 text-center text-gray-400 dark:text-gray-500 text-sm">No transactions yet. Add some to see them here.</div>
+        ))}
+      </div>
+
+      <div className="mb-6 grid gap-4 md:gap-6 lg:grid-cols-5">
+        <div className="lg:col-span-3"><TrendChart data={series} title="Month by month" /></div>
+        <div className="lg:col-span-2"><CategoryDonut data={cats} title="By category" subtitle={PERIOD_LABELS[period]} /></div>
+      </div>
+
+      <div className="grid gap-4 md:gap-6 lg:grid-cols-5">
+        <section className="card p-5 md:p-6 lg:col-span-3" aria-label="Category breakdown">
+          <h2 className="mb-4 text-lg font-bold">Spending breakdown</h2>
+          {cats.length === 0 ? (
+            <p className="py-6 text-sm text-muted">No expenses in this period.</p>
           ) : (
-            <ul className="divide-y divide-gray-100 dark:divide-gray-700">
-              {transactions.slice(0, 5).map(t => (
-                <li key={t.id} className="p-3 md:p-4 flex items-center justify-between">
-                  <div className="min-w-0">
-                    <p className="font-medium text-gray-900 dark:text-white truncate text-sm md:text-base">{t.title}</p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{t.category} · {t.date}</p>
-                  </div>
-                  <span className={`font-bold text-sm md:text-base flex-shrink-0 ml-2 ${t.type === 'income' ? 'text-green-600' : 'text-gray-900 dark:text-white'}`}>
-                    {t.type === 'income' ? '+' : '-'}₹{t.amount.toLocaleString()}
-                  </span>
-                </li>
-              ))}
+            <ul className="space-y-4">
+              {cats.map((c) => {
+                const share = (c.value / summary.expenses) * 100;
+                const { icon: Icon, color } = categoryMeta(c.name);
+                return (
+                  <li key={c.name}>
+                    <div className="mb-1.5 flex items-center gap-2.5 text-sm">
+                      <Icon size={16} style={{ color }} aria-hidden="true" />
+                      <span className="flex-1 font-medium">{c.name}</span>
+                      <span className="num text-muted">{Math.round(share)}%</span>
+                      <span className="num w-28 text-right font-semibold">{money(c.value)}</span>
+                    </div>
+                    <ProgressBar percent={share} color={color} height="h-2" label={`${c.name} share of spending`} />
+                  </li>
+                );
+              })}
             </ul>
           )}
-        </div>
+        </section>
 
-        <div className="md:hidden text-center text-xs text-gray-400 dark:text-gray-500 mt-10 pt-6 pb-4 border-t border-gray-200 dark:border-gray-700">
-          <p>2025 Expense Tracker - All rights reserved.</p>
-          <p className="mt-2 font-extrabold text-gray-900 dark:text-white tracking-wide text-sm">Built by Tewachew Melaku</p>
-        </div>
-      </main>
-    </div>
+        <section className="card p-5 md:p-6 lg:col-span-2" aria-label="Highlights">
+          <h2 className="mb-4 text-lg font-bold">Highlights</h2>
+          <dl className="space-y-4 text-sm">
+            <div>
+              <dt className="text-muted">Transactions</dt>
+              <dd className="num font-display text-2xl font-bold">{summary.count}</dd>
+            </div>
+            <div>
+              <dt className="text-muted">Biggest expense</dt>
+              <dd className="font-semibold">
+                {biggest ? <>{biggest.title} <span className="num">· {money(biggest.amount)}</span><span className="block text-xs font-normal text-muted">{shortDate(biggest.date)}</span></> : '–'}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted">Top category</dt>
+              <dd className="font-semibold">{cats[0] ? `${cats[0].name} · ${money(cats[0].value)}` : '–'}</dd>
+            </div>
+          </dl>
+        </section>
+      </div>
+    </Page>
   );
 };
 

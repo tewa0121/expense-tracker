@@ -1,157 +1,169 @@
-import React, { useState } from 'react';
-import Header from '../components/Header';
-import { useAuth } from '../context/AuthContext';
-import { useNotification } from '../context/NotificationContext';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, Mail, Bell, Shield, LogOut, Save, Moon, Sun, Lock } from 'lucide-react';
+import { Bell, Database, Download, Lock, LogOut, Moon, Palette, Shield, Sun, Trash2, Upload } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { useExpense } from '../context/ExpenseContext';
+import { useNotification } from '../context/NotificationContext';
+import ConfirmDialog from '../components/ConfirmDialog';
+import { Page, PageHeader } from '../components/ui';
+import { CURRENCIES } from '../lib/constants';
+import { todayStr } from '../lib/format';
+import { downloadFile } from '../utils/exportCsv';
 
-const Settings = ({ onMenuClick }) => {
-  const { user, logout, updateProfile, changePassword, darkMode, toggleDarkMode } = useAuth();
+const Switch = ({ checked, onChange, label }) => (
+  <button
+    type="button"
+    role="switch"
+    aria-checked={checked}
+    aria-label={label}
+    onClick={() => onChange(!checked)}
+    className={`relative h-7 w-12 flex-shrink-0 rounded-full transition ${checked ? 'bg-accent' : 'bg-line'}`}
+  >
+    <span className={`absolute left-0.5 top-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-5' : ''}`} />
+  </button>
+);
+
+const Section = ({ icon: Icon, title, children }) => (
+  <section className="card mb-6 p-5 md:p-6">
+    <h2 className="mb-4 flex items-center gap-2 font-sans text-base font-bold"><Icon size={18} /> {title}</h2>
+    {children}
+  </section>
+);
+
+const Row = ({ title, text, children }) => (
+  <div className="flex items-center justify-between gap-4 py-2">
+    <div className="min-w-0">
+      <p className="text-sm font-semibold">{title}</p>
+      {text && <p className="text-xs text-muted">{text}</p>}
+    </div>
+    {children}
+  </div>
+);
+
+const Settings = () => {
+  const { logout, changePassword, settings, updateSettings, darkMode, toggleDarkMode } = useAuth();
+  const { exportData, importData, clearAllData } = useExpense();
   const { addNotification } = useNotification();
   const navigate = useNavigate();
-  const [saved, setSaved] = useState(false);
-  const [profile, setProfile] = useState({ name: user?.name || '', email: user?.email || '' });
-  const [notifications, setNotifications] = useState(true);
-  const [showPasswordForm, setShowPasswordForm] = useState(false);
-  const [pwForm, setPwForm] = useState({ old: '', new: '', confirm: '' });
-  const [pwMessage, setPwMessage] = useState({ type: '', text: '' });
+  const fileRef = useRef(null);
 
-  const handleSave = (e) => {
+  const [showPw, setShowPw] = useState(false);
+  const [pw, setPw] = useState({ old: '', next: '', confirm: '' });
+  const [pwMsg, setPwMsg] = useState(null);
+  const [pwBusy, setPwBusy] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [importError, setImportError] = useState('');
+
+  const resetPw = () => { setShowPw(false); setPw({ old: '', next: '', confirm: '' }); setPwMsg(null); };
+
+  const handlePassword = async (e) => {
     e.preventDefault();
-    const result = updateProfile(profile);
-    if (result && !result.success) {
-      addNotification({ title: 'Profile update failed', message: result.error, type: 'error' });
-      return;
-    }
-    addNotification({ title: 'Settings saved', message: 'Your profile has been updated successfully', type: 'success' });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setPwMsg(null);
+    setPwBusy(true);
+    const res = await changePassword(pw.old, pw.next, pw.confirm);
+    setPwBusy(false);
+    if (!res.success) return setPwMsg(res.error);
+    addNotification({ title: 'Password changed', type: 'success', persist: false });
+    resetPw();
   };
 
-  const handleChangePassword = (e) => {
-    e.preventDefault();
-    setPwMessage({ type: '', text: '' });
-    if (pwForm.new !== pwForm.confirm) return setPwMessage({ type: 'error', text: 'New passwords do not match' });
+  const handleExport = () => {
+    downloadFile(`expense-tracker-backup-${todayStr()}.json`, JSON.stringify(exportData(), null, 2), 'application/json');
+    addNotification({ title: 'Backup downloaded', message: 'Keep the file somewhere safe.', type: 'success', persist: false });
+  };
 
-    const result = changePassword(pwForm.old, pwForm.new, pwForm.confirm);
-    if (result.success) {
-      setPwMessage({ type: 'success', text: 'Password changed successfully' });
-      addNotification({ title: 'Password changed', message: 'Your account password was updated successfully', type: 'success' });
-      setPwForm({ old: '', new: '', confirm: '' });
-      setTimeout(() => { setShowPasswordForm(false); setPwMessage({ type: '', text: '' }); }, 1500);
-    } else {
-      setPwMessage({ type: 'error', text: result.error });
-      addNotification({ title: 'Password change failed', message: result.error, type: 'error' });
+  const handleImport = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setImportError('');
+    try {
+      const res = importData(JSON.parse(await file.text()));
+      if (!res.success) setImportError(res.error);
+    } catch {
+      setImportError('That file couldn’t be read. Choose a backup you exported from this app.');
     }
   };
 
   const handleLogout = () => { logout(); navigate('/login'); };
 
   return (
-    <div className="bg-gray-50 dark:bg-gray-900 min-h-full">
-      <Header onMenuClick={onMenuClick} />
-      <main className="p-4 md:p-8 max-w-3xl mx-auto">
-        <div className="mb-6 md:mb-8">
-          <h2 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white">Settings</h2>
-          <p className="text-gray-500 dark:text-gray-400 mt-1 text-sm">Manage your account preferences</p>
-        </div>
+    <Page className="max-w-3xl">
+      <PageHeader title="Settings" subtitle="Make the app work the way you do." />
 
-        {saved && (
-          <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-400 text-sm p-3 rounded-xl mb-6 flex items-center gap-2">
-            <Save size={16} /> Settings saved successfully
+      <Section icon={Palette} title="Appearance and currency">
+        <Row title="Dark mode" text={darkMode ? 'Using the dark theme' : 'Using the light theme'}>
+          <div className="flex items-center gap-2.5">
+            {darkMode ? <Moon size={17} className="text-muted" /> : <Sun size={17} className="text-muted" />}
+            <Switch checked={darkMode} onChange={toggleDarkMode} label="Dark mode" />
           </div>
+        </Row>
+        <div className="mt-2 border-t border-line pt-4">
+          <label htmlFor="currency" className="label">Currency</label>
+          <select id="currency" className="input" value={settings.currency} onChange={(e) => updateSettings({ currency: e.target.value })}>
+            {CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
+          </select>
+          <p className="hint">Changes how amounts are displayed. Existing entries aren’t converted.</p>
+        </div>
+      </Section>
+
+      <Section icon={Bell} title="Alerts">
+        <Row title="Budget alerts" text="Get notified at 80% of a category budget, and when you go over.">
+          <Switch checked={settings.budgetAlerts} onChange={(v) => updateSettings({ budgetAlerts: v })} label="Budget alerts" />
+        </Row>
+      </Section>
+
+      <Section icon={Shield} title="Security">
+        {!showPw ? (
+          <button type="button" onClick={() => setShowPw(true)} className="btn-secondary"><Lock size={16} /> Change password</button>
+        ) : (
+          <form onSubmit={handlePassword} className="space-y-3" noValidate>
+            <div>
+              <label htmlFor="pw-old" className="label">Current password</label>
+              <input id="pw-old" type="password" autoComplete="current-password" className="input" value={pw.old} onChange={(e) => setPw({ ...pw, old: e.target.value })} />
+            </div>
+            <div>
+              <label htmlFor="pw-new" className="label">New password</label>
+              <input id="pw-new" type="password" autoComplete="new-password" className="input" value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} />
+              <p className="hint">At least 8 characters, with a letter and a number.</p>
+            </div>
+            <div>
+              <label htmlFor="pw-confirm" className="label">Confirm new password</label>
+              <input id="pw-confirm" type="password" autoComplete="new-password" className="input" value={pw.confirm} onChange={(e) => setPw({ ...pw, confirm: e.target.value })} />
+            </div>
+            {pwMsg && <p role="alert" className="rounded-xl bg-loss/10 px-3 py-2 text-sm font-medium text-loss">{pwMsg}</p>}
+            <div className="flex gap-2 pt-1">
+              <button type="submit" className="btn-primary" disabled={pwBusy}>Update password</button>
+              <button type="button" className="btn-secondary" onClick={resetPw}>Cancel</button>
+            </div>
+          </form>
         )}
+      </Section>
 
-        <form onSubmit={handleSave} className="space-y-6">
-          <div className="bg-white dark:bg-gray-800 p-4 md:p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
-            <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
-              <User size={20} className="text-indigo-600" /> Profile Information
-            </h3>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Full Name</label>
-                <input type="text" value={profile.name} onChange={e => setProfile({ ...profile, name: e.target.value })} className="w-full p-3 border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email</label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                  <input type="email" value={profile.email} onChange={e => setProfile({ ...profile, email: e.target.value })} className="w-full pl-10 pr-4 p-3 border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none" />
-                </div>
-                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Must be a @gmail.com address</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white dark:bg-gray-800 p-4 md:p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
-            <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
-              <Bell size={20} className="text-indigo-600" /> Preferences
-            </h3>
-            <div className="space-y-3">
-              <label className="flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
-                <div>
-                  <p className="font-medium text-gray-900 dark:text-white text-sm">Email Notifications</p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">Get updates about your budgets</p>
-                </div>
-                <input type="checkbox" checked={notifications} onChange={e => setNotifications(e.target.checked)} className="w-5 h-5 accent-indigo-600" />
-              </label>
-              <div className="flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                <div className="flex items-center gap-3">
-                  {darkMode ? <Moon size={18} className="text-indigo-600" /> : <Sun size={18} className="text-yellow-500" />}
-                  <div>
-                    <p className="font-medium text-gray-900 dark:text-white text-sm">Dark Mode</p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">Switch to a {darkMode ? 'light' : 'dark'} theme</p>
-                  </div>
-                </div>
-                <button type="button" onClick={toggleDarkMode} className={`relative w-12 h-6 rounded-full transition-colors ${darkMode ? 'bg-indigo-600' : 'bg-gray-300'}`}>
-                  <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${darkMode ? 'translate-x-6' : 'translate-x-0.5'}`} />
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white dark:bg-gray-800 p-4 md:p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
-            <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
-              <Shield size={20} className="text-indigo-600" /> Security
-            </h3>
-            {!showPasswordForm ? (
-              <button type="button" onClick={() => setShowPasswordForm(true)} className="text-sm text-indigo-600 dark:text-indigo-400 font-medium hover:underline flex items-center gap-2">
-                <Lock size={14} /> Change Password
-              </button>
-            ) : (
-              <div className="space-y-3">
-                {pwMessage.text && (
-                  <div className={`text-sm p-3 rounded-xl ${pwMessage.type === 'success' ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800'}`}>
-                    {pwMessage.text}
-                  </div>
-                )}
-                <input type="password" placeholder="Current password" value={pwForm.old} onChange={e => setPwForm({ ...pwForm, old: e.target.value })} className="w-full p-3 border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none" />
-                <input type="password" placeholder="New password (min 8 chars, letters + numbers)" value={pwForm.new} onChange={e => setPwForm({ ...pwForm, new: e.target.value })} className="w-full p-3 border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none" />
-                <input type="password" placeholder="Confirm new password" value={pwForm.confirm} onChange={e => setPwForm({ ...pwForm, confirm: e.target.value })} className="w-full p-3 border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none" />
-                <div className="flex gap-2">
-                  <button type="button" onClick={handleChangePassword} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-sm font-medium">Update Password</button>
-                  <button type="button" onClick={() => { setShowPasswordForm(false); setPwMessage({ type: '', text: '' }); setPwForm({ old: '', new: '', confirm: '' }); }} className="bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 px-4 py-2 rounded-xl text-sm font-medium hover:bg-gray-200 dark:hover:bg-gray-600">Cancel</button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="flex flex-col sm:flex-row gap-3">
-            <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-medium flex items-center justify-center gap-2">
-              <Save size={18} /> Save Changes
-            </button>
-            <button type="button" onClick={handleLogout} className="bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400 px-6 py-3 rounded-xl font-medium flex items-center justify-center gap-2 border border-red-100 dark:border-red-800">
-              <LogOut size={18} /> Logout
-            </button>
-          </div>
-        </form>
-
-        <div className="text-center text-xs text-gray-400 dark:text-gray-500 pt-8 pb-4">
-          <p>2025 Expense Tracker - All rights reserved.</p>
-          <p className="mt-2 font-extrabold text-gray-900 dark:text-white tracking-wide text-sm">Built by Tewachew Melaku</p>
+      <Section icon={Database} title="Your data">
+        <p className="mb-4 text-sm text-muted">Everything is stored in this browser only. Download a backup before clearing browser data or switching devices.</p>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="btn-secondary" onClick={handleExport}><Download size={16} /> Download backup</button>
+          <button type="button" className="btn-secondary" onClick={() => fileRef.current?.click()}><Upload size={16} /> Restore from backup</button>
+          <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={handleImport} aria-label="Choose backup file" />
         </div>
-      </main>
-    </div>
+        {importError && <p role="alert" className="mt-3 rounded-xl bg-loss/10 px-3 py-2 text-sm font-medium text-loss">{importError}</p>}
+        <div className="mt-5 border-t border-line pt-4">
+          <button type="button" className="btn-danger" onClick={() => setConfirmClear(true)}><Trash2 size={16} /> Delete all my data</button>
+        </div>
+      </Section>
+
+      <button type="button" onClick={handleLogout} className="btn-secondary w-full py-3 sm:w-auto"><LogOut size={17} /> Sign out</button>
+
+      <ConfirmDialog
+        open={confirmClear}
+        title="Delete all your data?"
+        message="Every transaction, budget, goal and loan on this account will be erased. Download a backup first if you might want it back."
+        confirmLabel="Delete everything"
+        onCancel={() => setConfirmClear(false)}
+        onConfirm={() => { clearAllData(); setConfirmClear(false); }}
+      />
+    </Page>
   );
 };
 
