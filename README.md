@@ -79,7 +79,7 @@ A modern, full-featured personal finance management web app built with **React +
 - Node.js 18+
 - npm or yarn
 
-### Installation
+<!-- ### Installation
 
 ```bash
 # Clone the repo
@@ -94,4 +94,4 @@ cd expense-tracker
 npm install
 
 # Run dev server
-npm run dev
+npm run dev -->
