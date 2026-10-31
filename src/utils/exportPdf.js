@@ -1,58 +1,75 @@
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import { formatPlain, todayStr } from '../lib/format';
+import { categoryData } from '../lib/finance';
 
-export const exportTransactionsPdf = (transactions, stats, user) => {
+const INK = [14, 35, 38];
+const GOLD = [242, 177, 52];
+
+/**
+ * jsPDF is loaded on demand so it isn't part of the initial bundle.
+ * Amounts use the ISO currency code because jsPDF's built-in font can't draw symbols like ₹ or €.
+ */
+export async function exportReportPdf({ transactions, summary, user, currency, periodLabel }) {
+  const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+    import('jspdf'),
+    import('jspdf-autotable'),
+  ]);
+
   const doc = new jsPDF();
+  const money = (n) => `${currency} ${formatPlain(n)}`;
 
-  // Title
+  doc.setFillColor(...INK);
+  doc.rect(0, 0, 210, 34, 'F');
+  doc.setTextColor(255, 255, 255);
   doc.setFontSize(20);
-  doc.setTextColor(79, 70, 229);
-  doc.text('Expense Tracker Report', 14, 20);
-
+  doc.text('Expense Tracker report', 14, 17);
   doc.setFontSize(10);
-  doc.setTextColor(120, 120, 120);
-  doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 27);
-  doc.text(`User: ${user?.name || 'N/A'} (${user?.email || 'N/A'})`, 14, 33);
-
-  // Summary
-  doc.setFontSize(12);
-  doc.setTextColor(0, 0, 0);
-  doc.text('Summary', 14, 45);
+  doc.setTextColor(...GOLD);
+  doc.text(periodLabel, 14, 25);
+  doc.setTextColor(200, 210, 208);
+  doc.text(`${user?.name || ''}  ${user?.email ? `<${user.email}>` : ''}`, 196, 17, { align: 'right' });
+  doc.text(`Generated ${new Date().toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' })}`, 196, 25, { align: 'right' });
 
   autoTable(doc, {
-    startY: 50,
-    head: [['Metric', 'Value']],
+    startY: 42,
+    head: [['Summary', '']],
     body: [
-      ['Total Income', `Rs. ${stats.income.toLocaleString()}`],
-      ['Total Expenses', `Rs. ${stats.expenses.toLocaleString()}`],
-      ['Balance', `Rs. ${stats.balance.toLocaleString()}`],
-      ['Transactions', transactions.length]
+      ['Income', money(summary.income)],
+      ['Spent', money(summary.expenses)],
+      ['Net', money(summary.balance)],
+      ['Savings rate', summary.savingsRate === null ? 'n/a' : `${summary.savingsRate}%`],
+      ['Transactions', String(summary.count)],
     ],
-    theme: 'grid',
-    headStyles: { fillColor: [79, 70, 229] }
+    theme: 'plain',
+    headStyles: { fillColor: INK, textColor: 255 },
+    columnStyles: { 1: { halign: 'right', fontStyle: 'bold' } },
+    styles: { fontSize: 10, cellPadding: 2.5 },
   });
 
-  // Transactions
-  const afterSummary = doc.lastAutoTable.finalY + 10;
-  doc.setFontSize(12);
-  doc.text('Transactions', 14, afterSummary);
+  const cats = categoryData(summary.byCategory);
+  if (cats.length) {
+    autoTable(doc, {
+      startY: doc.lastAutoTable.finalY + 10,
+      head: [['Spending by category', 'Share', 'Amount']],
+      body: cats.map((c) => [c.name, `${Math.round((c.value / summary.expenses) * 100)}%`, money(c.value)]),
+      theme: 'striped',
+      headStyles: { fillColor: INK },
+      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } },
+      styles: { fontSize: 10 },
+    });
+  }
 
   autoTable(doc, {
-    startY: afterSummary + 5,
-    head: [['Date', 'Title', 'Category', 'Type', 'Amount (Rs.)']],
-    body: transactions.map(t => [
-      t.date,
-      t.title,
-      t.category,
-      t.type.charAt(0).toUpperCase() + t.type.slice(1),
-      `${t.type === 'income' ? '+' : '-'}${t.amount.toLocaleString()}`
+    startY: doc.lastAutoTable.finalY + 10,
+    head: [['Date', 'Title', 'Category', 'Type', `Amount (${currency})`]],
+    body: transactions.map((t) => [
+      t.date, t.title, t.category, t.type === 'income' ? 'Income' : 'Expense',
+      `${t.type === 'income' ? '+' : '-'}${formatPlain(t.amount)}`,
     ]),
     theme: 'striped',
-    headStyles: { fillColor: [79, 70, 229] },
-    columnStyles: {
-      4: { halign: 'right' }
-    }
+    headStyles: { fillColor: INK },
+    columnStyles: { 4: { halign: 'right' } },
+    styles: { fontSize: 9 },
   });
 
-  doc.save(`expense-report-${new Date().toISOString().split('T')[0]}.pdf`);
-};
+  doc.save(`expense-report-${todayStr()}.pdf`);
+}
