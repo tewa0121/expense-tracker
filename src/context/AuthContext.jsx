@@ -12,6 +12,19 @@ const USERS_KEY = 'expense_users_db';
 const SESSION_KEY = 'expense_user';
 const THEME_KEY = 'expense_dark';
 
+// The signed-in session lasts only while this tab/browser stays open, so opening the app
+// again always starts at the sign-in page. Account data itself stays in localStorage.
+const readSessionId = () => {
+  try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)); } catch { return null; }
+};
+const writeSessionId = (value) => {
+  try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(value)); } catch { /* ignore */ }
+};
+const clearSession = () => {
+  try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
+  removeKey(SESSION_KEY); // also clears the old "stay signed in" entry from earlier versions
+};
+
 const settingsKey = (id) => `expense_${id}_settings`;
 
 const getUsers = () => readJSON(USERS_KEY, []);
@@ -36,7 +49,7 @@ function withIds(users) {
 const publicUser = (u) => ({ id: u.id, name: u.name, email: u.email, createdAt: u.createdAt });
 
 function readSession() {
-  const stored = readJSON(SESSION_KEY, null);
+  const stored = readSessionId();
   if (!stored) return null;
   const users = withIds(getUsers());
   const found = users.find((u) => u.id === stored.id) || users.find((u) => u.email === stored.email);
@@ -73,7 +86,7 @@ export const AuthProvider = ({ children }) => {
 
   const startSession = useCallback((u) => {
     const session = publicUser(u);
-    writeJSON(SESSION_KEY, { id: session.id });
+    writeSessionId({ id: session.id });
     setSettings({ ...DEFAULT_SETTINGS, ...readJSON(settingsKey(session.id), {}) });
     setUser(session);
   }, []);
@@ -156,7 +169,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   const logout = () => {
-    removeKey(SESSION_KEY);
+    clearSession();
     setUser(null);
     setSettings(DEFAULT_SETTINGS);
   };
