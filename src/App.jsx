@@ -7,7 +7,6 @@ import { UIProvider } from './context/UIContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
-import BottomNav from './components/BottomNav';
 import Toaster from './components/Toaster';
 import { Skeleton } from './components/ui';
 
@@ -80,8 +79,8 @@ function AppShell() {
         <Sidebar />
       </aside>
 
-      <div className="min-w-0 flex-1 pb-24 lg:pb-0">
-        <Header />
+      <div className="min-w-0 flex-1">
+        <Header onMenu={() => setDrawerOpen(true)} />
         <main id="main">
           <Suspense fallback={<PageFallback />}>
             <Routes>
@@ -98,8 +97,6 @@ function AppShell() {
           </Suspense>
         </main>
       </div>
-
-      <BottomNav onMore={() => setDrawerOpen(true)} />
 
       {drawerOpen && (
         <div className="lg:hidden">

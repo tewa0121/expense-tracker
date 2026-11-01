@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Search, Moon, Sun, Bell, User, LogOut, Settings, Check, Trash2, Plus, X,
+  Search, Moon, Sun, Bell, User, LogOut, Settings, Check, Trash2, Plus, X, Menu,
 } from 'lucide-react';
-import { LogoMark } from './Logo';
 import { TYPE_STYLE } from './Toaster';
 import { useAuth } from '../context/AuthContext';
 import { useNotification } from '../context/NotificationContext';
@@ -28,7 +27,7 @@ function usePopover() {
   return { open, setOpen, ref };
 }
 
-const Header = () => {
+const Header = ({ onMenu }) => {
   const { user, logout, darkMode, toggleDarkMode } = useAuth();
   const { notifications, unreadCount, markAsRead, markAllRead, clearAll, deleteNotification } = useNotification();
   const { openTransactionModal } = useUI();
@@ -53,7 +52,9 @@ const Header = () => {
   return (
     <header className="sticky top-0 z-30 border-b border-line bg-bg/85 backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 md:px-8">
-        <div className="lg:hidden"><LogoMark size={32} /></div>
+        <button type="button" onClick={onMenu} className="icon-btn -ml-2 lg:hidden" aria-label="Open menu">
+          <Menu size={22} />
+        </button>
 
         <form onSubmit={submitSearch} className="relative hidden max-w-sm flex-1 md:block" role="search">
           <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" size={17} aria-hidden="true" />
@@ -77,8 +78,8 @@ const Header = () => {
             <Search size={19} />
           </button>
 
-          <button type="button" onClick={() => openTransactionModal()} className="btn-primary hidden md:inline-flex">
-            <Plus size={18} strokeWidth={2.5} /> Add transaction
+          <button type="button" onClick={() => openTransactionModal()} className="btn-primary" aria-label="Add transaction">
+            <Plus size={18} strokeWidth={2.5} /> <span className="hidden sm:inline">Add transaction</span>
           </button>
 
           <button type="button" onClick={toggleDarkMode} className="icon-btn" aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}>
