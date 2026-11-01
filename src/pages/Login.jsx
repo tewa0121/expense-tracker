@@ -170,7 +170,7 @@ const Login = () => {
           </p>
 
           <p className="mt-10 text-center text-xs text-faint">
-            © {new Date().getFullYear()} Expense Tracker · Built by <span className="font-semibold text-muted">Tewachew Melaku</span>
+            © {new Date().getFullYear()} Expense Tracker · Built by <span className="font-semibold text-muted">Tewachew Melaku</span> · <a href="https://t.me/Tewa0121" target="_blank" rel="noreferrer" className="font-semibold text-muted hover:text-fg">@Tewa0121</a>
           </p>
         </div>
       </main>

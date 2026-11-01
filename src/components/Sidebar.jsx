@@ -18,7 +18,6 @@ const ICONS = {
 };
 
 const LINKS = [
-  { href: 'https://t.me/tewa0121', label: 'Telegram', icon: Send },
   { href: 'https://www.linkedin.com/in/tewachew-melaku-6b5094408', label: 'LinkedIn', icon: Linkedin },
   { href: 'mailto:tewachewmelaku6@gmail.com', label: 'Email', icon: Mail },
 ];
@@ -96,6 +95,15 @@ const Sidebar = ({ onClose, isMobile }) => {
             <LogOut size={18} />
           </button>
         </div>
+
+        <a
+          href="https://t.me/Tewa0121"
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center gap-2 rounded-lg px-1 text-xs font-medium text-white/65 transition hover:text-white"
+        >
+          <Send size={14} aria-hidden="true" /> Telegram @Tewa0121
+        </a>
 
         <div className="flex items-center justify-between px-1">
           <p className="text-[11px] leading-tight text-white/45">

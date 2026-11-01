@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Search, Moon, Sun, Bell, User, LogOut, Settings, Check, Trash2, Plus, X, Menu,
 } from 'lucide-react';
+import { LogoMark } from './Logo';
 import { TYPE_STYLE } from './Toaster';
 import { useAuth } from '../context/AuthContext';
 import { useNotification } from '../context/NotificationContext';
@@ -55,6 +56,12 @@ const Header = ({ onMenu }) => {
         <button type="button" onClick={onMenu} className="icon-btn -ml-2 lg:hidden" aria-label="Open menu">
           <Menu size={22} />
         </button>
+        <Link to="/" className="flex items-center gap-2 lg:hidden" aria-label="Expense Tracker home">
+          <LogoMark size={32} />
+          <span className="hidden font-display text-base font-bold leading-none tracking-tight sm:block">
+            Expense<br />Tracker
+          </span>
+        </Link>
 
         <form onSubmit={submitSearch} className="relative hidden max-w-sm flex-1 md:block" role="search">
           <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" size={17} aria-hidden="true" />
